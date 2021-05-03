@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+  </head>
+  <body>
+    <div class="container">
+      <video class="input_video" width="0px" height="0px"></video>
+      <canvas class="output_canvas" width="640px" height="360px"></canvas>
+    </div>
+    <div style="font-size:320%;color:#FF0000;width:640px;" class="label"></div>
+    <script type="text/javascript" src="main.js"></script>
+  </body>
+</html>
+import {drawConnectors, drawLandmarks} from '@mediapipe/drawing_utils/drawing_utils'
+import {Camera} from '@mediapipe/camera_utils/camera_utils'
+import {Hands, HAND_CONNECTIONS} from '@mediapipe/hands/hands'
+
+// DOM要素
+const videoElement = document.getElementsByClassName('input_video')[0]
+const canvasElement = document.getElementsByClassName('output_canvas')[0]
+const canvasCtx = canvasElement.getContext('2d')
+const label = document.getElementsByClassName('label')[0]
+
+// 2頂点の距離の計算
+function calcDistance(p0, p1) {
+  let a1 = p1.x-p0.x
+  let a2 = p1.y-p0.y
+  return Math.sqrt(a1*a1 + a2*a2)
+}
+
+// 3頂点の角度の計算
+function calcAngle(p0, p1, p2) {
+  let a1 = p1.x-p0.x
+  let a2 = p1.y-p0.y
+  let b1 = p2.x-p1.x
+  let b2 = p2.y-p1.y
+  let angle = Math.acos( (a1*b1 + a2*b2) / Math.sqrt((a1*a1 + a2*a2)*(b1*b1 + b2*b2)) ) * 180/Math.PI
+  return angle
+}
+
+// 指の角度の合計の計算
+function cancFingerAngle(p0, p1, p2, p3, p4) {
+  let result = 0
+  result += calcAngle(p0, p1, p2)
+  result += calcAngle(p1, p2, p3)
+  result += calcAngle(p2, p3, p4)
+  return result
+}
+
+// 指ポーズの検出
+function detectFingerPose(landmarks) {
+  // 指のオープン・クローズ
+  let thumbIsOpen = cancFingerAngle(landmarks[0], landmarks[1], landmarks[2], landmarks[3], landmarks[4]) < 70
+  let firstFingerIsOpen = cancFingerAngle(landmarks[0], landmarks[5], landmarks[6], landmarks[7], landmarks[8]) < 100
+  let secondFingerIsOpen = cancFingerAngle(landmarks[0], landmarks[9], landmarks[10], landmarks[11], landmarks[12]) < 100
+  let thirdFingerIsOpen = cancFingerAngle(landmarks[0], landmarks[13], landmarks[14], landmarks[15], landmarks[16]) < 100
+  let fourthFingerIsOpen = cancFingerAngle(landmarks[0], landmarks[17], landmarks[18], landmarks[19], landmarks[20]) < 100
+
+  // ジェスチャー
+  if (calcDistance(landmarks[4], landmarks[8]) < 0.1 && secondFingerIsOpen && thirdFingerIsOpen && fourthFingerIsOpen) {
+    return "OK"
+  } else if (calcDistance(landmarks[4], landmarks[12]) < 0.1 && calcDistance(landmarks[4], landmarks[16]) < 0.1 && firstFingerIsOpen && fourthFingerIsOpen) {
+    return "キツネ"
+  } else if (thumbIsOpen && !firstFingerIsOpen && !secondFingerIsOpen && !thirdFingerIsOpen && !fourthFingerIsOpen) {
+    return "いいね"
+  } else if (thumbIsOpen && firstFingerIsOpen && secondFingerIsOpen && thirdFingerIsOpen && fourthFingerIsOpen) {
+    return "５"
+  } else if (!thumbIsOpen && firstFingerIsOpen && secondFingerIsOpen && thirdFingerIsOpen && fourthFingerIsOpen) {
+    return "４"
+  } else if (!thumbIsOpen && firstFingerIsOpen && secondFingerIsOpen && thirdFingerIsOpen && !fourthFingerIsOpen) {
+    return "３"
+  } else if (!thumbIsOpen && firstFingerIsOpen && secondFingerIsOpen && !thirdFingerIsOpen && !fourthFingerIsOpen) {
+    return "２"
+  } else if (!thumbIsOpen && firstFingerIsOpen && !secondFingerIsOpen && !thirdFingerIsOpen && !fourthFingerIsOpen) {
+    return "１"
+  }
+  return "０"
+}
+
+// 結果取得時の処理
+function onResults(results) {
+ canvasCtx.save()
+ canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height)
+ canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height)
+ if (results.multiHandLandmarks) {
+   for (const landmarks of results.multiHandLandmarks) {
+     // 指ポーズの検出
+     label.innerHTML = "<center>"+detectFingerPose(landmarks)+"</center>"
+
+     drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+       {color: '#00FF00', lineWidth: 5})
+     drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2})
+   }
+ }
+ canvasCtx.restore()
+}
+
+// Handsオブジェクトの準備
+const hands = new Hands({locateFile: (file) => {
+ return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+}})
+hands.setOptions({
+ maxNumHands: 2,
+ minDetectionConfidence: 0.7,
+ minTrackingConfidence: 0.5
+})
+hands.onResults(onResults)
+
+// カメラの準備
+const camera = new Camera(videoElement, {
+ onFrame: async () => {
+   await hands.send({image: videoElement})
+ },
+ width: 640,
+ height: 360
+})
+camera.start()
